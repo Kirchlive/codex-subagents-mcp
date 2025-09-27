@@ -1,76 +1,35 @@
-# Agents
+# Repository Guidelines
 
-Author custom sub‑agents without code changes by adding files to an agents registry directory. The MCP server loads definitions from `agents/*.md` and `agents/*.json`. Agent names map to file basenames (e.g., `agents/perf.md` registers agent `perf`). The server may include a few example built‑ins for demos, but prefer files on disk (or use an ad‑hoc inline agent when both `persona` and `profile` are provided).
+## Project Structure & Module Organization
+- `src/` hosts the TypeScript MCP server; `codex-subagents.mcp.ts` wires tools and loading, with helpers in sibling modules. Keep new modules cohesive and export minimal surfaces.
+- `agents/` contains sample personas; new definitions must use the basename as the agent key (e.g., `agents/review.md` → `review`).
+- `tests/` mirrors runtime behavior with Vitest suites (`*.test.ts`). Add fixtures under `tests/fixtures/` if suites grow.
+- `docs/` provides integration, security, and operations playbooks—update when behavior changes. Build artifacts land in `dist/` and should stay unversioned.
+- `scripts/` holds developer utilities like `scripts/e2e.sh`; prefer extending these instead of duplicating logic.
 
-- Point the server to your agents directory via `--agents-dir` or `CODEX_SUBAGENTS_DIR`. It also auto-detects `./agents` or `./.codex-subagents/agents` when not provided.
-- Keep personas task‑oriented and concise; avoid generic, unfocused instructions.
+## Build, Test, and Development Commands
+- `npm install` installs dependencies.
+- `npm run build` compiles TypeScript into `dist/`.
+- `npm run dev` starts the MCP server via `tsx` for iterative work.
+- `npm start` runs the compiled stdio server; mirrors production usage.
+- `npm run lint` applies ESLint + TypeScript rules.
+- `npm test` executes Vitest suites; `npm run e2e` runs the Codex CLI smoke flow (requires Codex installed).
 
-## Markdown agent (frontmatter + persona)
+## Coding Style & Naming Conventions
+- Use TypeScript with 2-space indentation, trailing commas where TS allows, and named exports for shared helpers.
+- Follow the ESLint config (`@typescript-eslint/recommended`); silence unused parameters with a leading `_`.
+- Agent files should be lowercase, hyphenated basenames (`agents/security.json`, `agents/perf.md`) describing their specialty.
 
-Create `agents/<name>.md`:
+## Testing Guidelines
+- Write Vitest specs alongside related suites using the `FeatureName.test.ts` pattern; cover both success and failure paths.
+- Include regression tests for bugs and update fixtures when agent loading or orchestration changes.
+- For cross-tool validation, run `npm run e2e` and capture notable output in the PR description.
 
-```md
----
-profile: debugger
-approval_policy: on-request   # never | on-request | on-failure | untrusted
-sandbox_mode: workspace-write # read-only | workspace-write | danger-full-access
----
-You are a pragmatic performance analyst. Identify hotspots, propose minimal, measurable fixes, and outline validation steps with lightweight metrics.
-```
+## Commit & Pull Request Guidelines
+- Use Conventional Commit prefixes (`docs:`, `test:`, `fix:`) as seen in `git log`; keep subjects imperative and under ~70 chars.
+- Each PR should summarize intent, list validation commands, link issues, and note doc updates (README, `docs/*`, `AGENTS.md`).
+- Exclude `dist/` changes and keep PRs focused; open follow-ups for unrelated improvements.
 
-Required: `profile` (loader defaults to `default` if omitted). Optional: `approval_policy`, `sandbox_mode`. The body is the persona text injected for the sub‑agent.
-
-## JSON agent
-
-Create `agents/<name>.json`:
-
-```json
-{
-  "profile": "debugger",
-  "persona": "You plan and validate safe DB migrations with rollbacks.",
-  "approval_policy": "on-request",
-  "sandbox_mode": "workspace-write"
-}
-```
-
-Required: `profile`, `persona`. Optional: `approval_policy`, `sandbox_mode`.
-
-## Tips
-
-- Validate registry: `tools.call name=validate_agents` (optionally pass `{ "dir": "/abs/path" }`).
-- List available agents: `tools.call name=list_agents`.
-- Align metadata with Codex profiles you run under; enforce behavior in `~/.codex/config.toml`.
-- Keep personas short, specific, and action‑biased; prefer concrete checklists over philosophy.
- - See also: `docs/OPERATIONS.md`.
-
-## Usage Hint
-
-When a task matches a sub‑agent specialty, call the MCP tool:
-
-- Orchestrate multi-step → `subagents.delegate(agent="orchestrator", task="<task>")`
-- iOS → `subagents.delegate(agent="ios", task="<task>")`
-- Web → `subagents.delegate(agent="web", task="<task>")`
-- UX → `subagents.delegate(agent="ux", task="<task>")`
-- Test → `subagents.delegate(agent="test", task="<task>")`
-- DevOps → `subagents.delegate(agent="devops", task="<task>")`
-- Code review → `subagents.delegate(agent="review", task="<task>")`
-- Security → `subagents.delegate(agent="security", task="<task>")`
-- Performance → `subagents.delegate(agent="perf", task="<task>")`
-- API → `subagents.delegate(agent="api", task="<task>")`
-- Docs → `subagents.delegate(agent="docs", task="<task>")`
-- Git/PRs → `subagents.delegate(agent="git", task="<task>")`
-- Research → `subagents.delegate(agent="research", task="<task>")`
-- Customer discovery → `subagents.delegate(agent="custdev", task="<task>")`
-- Pricing/monetization → `subagents.delegate(agent="pricing", task="<task>")`
-- Copywriting → `subagents.delegate(agent="copy", task="<task>")`
-- Analytics/experiments → `subagents.delegate(agent="analytics", task="<task>")`
-- Accessibility → `subagents.delegate(agent="a11y", task="<task>")`
-- Obsidian vault → `subagents.delegate(agent="obsidian", task="<task>")`
-- Focus coaching → `subagents.delegate(agent="coach", task="<task>")`
-
-Prefer tool calls over in‑thread analysis to keep the main context clean.
-
-## Related docs
-
-- docs/INTEGRATION.md
-- docs/SECURITY.md
+## Agent Registry Tips
+- Validate definitions before merging with `tools.call name=validate_agents`.
+- When adding a new persona, document its profile and sandbox defaults in the PR and update `docs/OPERATIONS.md` if workflow changes.

@@ -9,7 +9,7 @@
  you can swap it with minimal code changes.
 */
 
-import { mkdtempSync, writeFileSync, cpSync, existsSync, readdirSync, readFileSync, statSync, mkdirSync } from 'fs';
+import { mkdtempSync, writeFileSync, cpSync, existsSync, readdirSync, readFileSync, statSync, mkdirSync, writeSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, basename, extname, resolve } from 'path';
 import { spawn } from 'child_process';
@@ -112,6 +112,13 @@ export type DelegateBatchParams = z.infer<typeof DelegateBatchParamsSchema>;
 // Spawn helper
 export function run(cmd: string, args: string[], cwd?: string): Promise<{ code: number; stdout: string; stderr: string }>
 {
+  if (process.env.SUBAGENTS_DISABLE_CODEX === '1') {
+    return Promise.resolve({
+      code: 127,
+      stdout: '',
+      stderr: 'codex execution disabled (SUBAGENTS_DISABLE_CODEX=1)',
+    });
+  }
   function sanitizedEnv(base: NodeJS.ProcessEnv = process.env) {
     const allow = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'SHELL', 'TERM', 'TMPDIR'];
     const prefixAllow = ['CODEX_', 'SUBAGENTS_'];
@@ -131,7 +138,7 @@ export function run(cmd: string, args: string[], cwd?: string): Promise<{ code: 
     const toUtf8 = (arr: Array<string | Buffer>) =>
       Buffer.concat(arr.map((x) => (Buffer.isBuffer(x) ? x : Buffer.from(String(x))))).toString('utf8');
     child.on('close', (code) => resolve({ code: code ?? 0, stdout: toUtf8(outChunks), stderr: toUtf8(errChunks) }));
-    child.on('error', (err: any) => {
+    child.on('error', (err: NodeJS.ErrnoException) => {
       const msg = err && err.code === 'ENOENT'
         ? 'codex binary not found in PATH. Install Codex CLI and ensure it is on PATH. See README.md for setup instructions.'
         : String(err);
@@ -269,8 +276,37 @@ export function loadAgentsFromDir(dir?: string): Record<string, AgentSpec> {
   return out;
 }
 
-export async function delegateHandler(params: unknown) {
+export type DelegateResult = {
+  ok: boolean;
+  code: number;
+  stdout: string;
+  stderr: string;
+  working_dir: string;
+};
+
+export async function delegateHandler(params: unknown): Promise<DelegateResult> {
   const parsed = DelegateParamsSchema.parse(params);
+  const dynamic = loadAgentsFromDir(getAgentsDir());
+  const registry: Record<string, AgentSpec> = { ...AGENTS, ...dynamic };
+  const inlineSpec = parsed.persona && parsed.profile ? {
+    persona: parsed.persona,
+    profile: parsed.profile,
+    approval_policy: parsed.approval_policy,
+    sandbox_mode: parsed.sandbox_mode,
+  } as AgentSpec : undefined;
+  const initialSpec = registry[parsed.agent as AgentKey] ?? registry[parsed.agent];
+
+  if (parsed.agent !== 'orchestrator' && !initialSpec && !inlineSpec) {
+    return {
+      ok: false,
+      code: 2,
+      stdout: '',
+      stderr:
+        `Unknown agent: ${parsed.agent}. Create agents/<name>.md or pass persona+profile inline. ` +
+        'See README.md “Custom agents”.',
+      working_dir: '',
+    };
+  }
   // Token gating & routing
   if (parsed.agent !== 'orchestrator') {
     if (parsed.token !== ORCHESTRATOR_TOKEN) {
@@ -283,12 +319,12 @@ export async function delegateHandler(params: unknown) {
           working_dir: '',
         };
       }
-      const routed = routeThroughOrchestrator(parsed);
+      const routed = routeThroughOrchestrator(parsed, ORCHESTRATOR_TOKEN);
       return delegateHandler({ ...parsed, ...routed });
     }
   } else {
     if (!parsed.request_id) {
-      const routed = routeThroughOrchestrator(parsed);
+      const routed = routeThroughOrchestrator(parsed, ORCHESTRATOR_TOKEN);
       parsed.request_id = routed.request_id;
       parsed.task = routed.task;
     } else {
@@ -298,15 +334,8 @@ export async function delegateHandler(params: unknown) {
   }
 
   const agentName = parsed.agent;
-  const dynamic = loadAgentsFromDir(getAgentsDir());
-  const registry: Record<string, AgentSpec> = { ...AGENTS, ...dynamic };
   const known = registry[agentName as AgentKey] ?? registry[agentName];
-  const spec: AgentSpec | undefined = known ?? (parsed.persona && parsed.profile ? {
-    persona: parsed.persona,
-    profile: parsed.profile,
-    approval_policy: parsed.approval_policy,
-    sandbox_mode: parsed.sandbox_mode,
-  } : undefined);
+  const spec: AgentSpec | undefined = known ?? inlineSpec;
   if (!spec) {
     return {
       ok: false,
@@ -377,10 +406,10 @@ export async function delegateHandler(params: unknown) {
   };
 }
 
-export async function delegateBatchHandler(params: unknown) {
+export async function delegateBatchHandler(params: unknown): Promise<{ results: DelegateResult[] }> {
   try {
-    if (params && typeof params === 'object' && 'agent' in (params as any)) {
-      const single = await delegateHandler(params);
+    if (typeof params === 'object' && params !== null && 'agent' in params && 'task' in params) {
+      const single = await delegateHandler(params as DelegateParams);
       return { results: [single] };
     }
     const parsed = DelegateBatchParamsSchema.parse(params);
@@ -494,9 +523,19 @@ class TinyMCPServer {
     const payload = JSON.stringify(obj);
     if (this.framing === 'cl') {
       const header = `Content-Length: ${Buffer.byteLength(payload, 'utf8')}\r\n\r\n`;
-      process.stdout.write(header + payload);
+      const message = header + payload;
+      try {
+        writeSync(process.stdout.fd, message);
+      } catch {
+        process.stdout.write(message);
+      }
     } else {
-      process.stdout.write(payload + '\n');
+      const message = payload + '\n';
+      try {
+        writeSync(process.stdout.fd, message);
+      } catch {
+        process.stdout.write(message);
+      }
     }
   }
 

@@ -72,7 +72,7 @@ export function finalize(todo: Todo, summary: string, status: 'done' | 'canceled
   todo.summary = summary;
 }
 
-export function routeThroughOrchestrator(params: DelegateParams) {
+export function routeThroughOrchestrator(params: DelegateParams, token?: string) {
   const cwd = params.cwd ?? process.cwd();
   const request_id = params.request_id || randomUUID();
   const root = join(cwd, 'orchestration', request_id);
@@ -91,20 +91,22 @@ export function routeThroughOrchestrator(params: DelegateParams) {
     };
     saveTodo(todo, cwd);
   }
+  const meta: Record<string, unknown> = {
+    request_id,
+    requested_agent: params.agent,
+    cwd: params.cwd ?? null,
+    mirror_repo: params.mirror_repo ?? false,
+    profile: params.profile ?? null,
+    has_persona: Boolean(params.persona),
+  };
+  if (token) meta.token = token;
+
   const envelope = [
     '[[ORCH-ENVELOPE]]',
-    JSON.stringify({
-      request_id,
-      requested_agent: params.agent,
-      cwd: params.cwd ?? null,
-      mirror_repo: params.mirror_repo ?? false,
-      profile: params.profile ?? null,
-      has_persona: Boolean(params.persona),
-    }, null, 2),
+    JSON.stringify(meta, null, 2),
     '[[/ORCH-ENVELOPE]]',
     '',
     params.task,
   ].join('\n');
   return { agent: 'orchestrator', task: envelope, request_id };
 }
-

@@ -5,6 +5,6 @@ export default defineConfig({
     include: ['tests/**/*.ts'],
     environment: 'node',
     watch: false,
+    pool: 'threads',
   },
 });
-

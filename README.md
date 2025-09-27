@@ -3,304 +3,151 @@
 [![CI](https://github.com/leonardsellem/codex-subagents-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/leonardsellem/codex-subagents-mcp/actions/workflows/ci.yml)
 ![Node >=18](https://img.shields.io/badge/node-%3E%3D18-brightgreen)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
-![GitHub stars](https://img.shields.io/github/stars/leonardsellem/codex-subagents-mcp?style=social)
 
-File‑based sub‑agents for Codex CLI. One MCP tool. Zero fluff.
+File-based Codex sub-agents served over MCP. Every agent is a plain file you can review, diff, and ship like application code.
 
-- Auditable: agents are files reviewed in PRs
-- CI‑friendly: `validate_agents`, `list_agents`
-- Safer ops: temp workdirs, quiet stdout, git worktree isolation
+- **Auditable by design** – personas live in `agents/*.md|json` and load without rebuilding.
+- **Safe defaults** – orchestration injects tokens, isolates workdirs, and mirrors repos only when asked.
+- **CLI-first** – exposes one main tool (`delegate`) plus helpers (`list_agents`, `validate_agents`).
 
-Claude‑style sub‑agents for Codex CLI via a tiny MCP server. Each call spins up a clean context in a temp workdir, injects a persona via `AGENTS.md`, and runs `codex exec --profile <agent>` to preserve isolated state.
+## What’s new in this fork
 
-## Quickstart
+- Automatic token injection in orchestration envelopes (no manual `token="<server-injected-token>"` required).
+- `SUBAGENTS_DISABLE_CODEX=1` bypass switch for tests/CI: the server short-circuits Codex execs with code `127` so Vitest runs deterministically.
+- OAuth-friendly E2E flow – `scripts/e2e.sh` reuses `~/.codex/auth.json` and hits `gpt-5-codex` without custom API keys.
 
-- Prereqs: Node.js >= 18, npm, Codex CLI installed and on PATH.
-- Install deps and build:
+## Requirements
 
-```
+- Node.js >= 18 and npm
+- Codex CLI `@openai/codex` (>= 0.42.0) installed and on PATH
+- Codex account with access to `gpt-5-codex` (or adjust profiles accordingly)
+- Optional: Bash (WSL, macOS, or Git Bash) for running `scripts/e2e.sh`
+
+## Install & Build
+
+```bash
 npm install
 npm run build
 ```
 
-- Start server (manual run):
+The build emits `dist/codex-subagents.mcp.js`, the entry point you pass to Codex CLI.
 
-```
-npm start
-```
+## Configure Codex CLI
 
-Tools exposed by this server:
-- Primary: `delegate`
-- Support: `list_agents`, `validate_agents`
+1. Authenticate once:
+   ```bash
+   codex auth login
+   ```
+2. Add the MCP server and profiles in `~/.codex/config.toml`:
+   ```toml
+   [profiles.default]
+   model = "gpt-5-codex"
+   approval_policy = "never"
+   sandbox_mode = "read-only"
 
-Agents directory discovery (in order): `--agents-dir` arg, `CODEX_SUBAGENTS_DIR` env, then defaults `./agents`, `./.codex-subagents/agents`, `dist/../agents`.
+   [profiles.review]
+   model = "gpt-5-codex"
+   approval_policy = "on-request"
+   sandbox_mode = "workspace-write"
 
-### 60‑second Quickstart (copy‑paste)
+   [profiles.debugger]
+   model = "gpt-5-codex"
+   approval_policy = "on-request"
+   sandbox_mode = "workspace-write"
 
-```
-# 1) Install + build
-npm i && npm run build
+   [profiles.security]
+   model = "gpt-5-codex"
+   approval_policy = "never"
+   sandbox_mode = "read-only"
 
-# 2) Point Codex at the built server (absolute paths recommended)
-# ~/.codex/config.toml
-[mcp_servers.subagents]
-command = "/usr/bin/env"
-args    = ["node", "/ABS/PATH/TO/dist/codex-subagents.mcp.js", "--agents-dir", "/ABS/PATH/TO/agents"]
+   [mcp_servers.subagents]
+   command = "/usr/bin/env"
+   args    = ["node", "/ABS/PATH/dist/codex-subagents.mcp.js", "--agents-dir", "/ABS/PATH/agents"]
+   startup_timeout_sec = 15
+   tool_timeout_sec = 120
+   ```
 
-# Example profiles you can reference from agent frontmatter
-[profiles.review]
-model = "gpt-5"
-approval_policy = "on-request"
-sandbox_mode    = "read-only"
+3. (Optional) if you keep agents elsewhere, set `CODEX_SUBAGENTS_DIR=/abs/path/agents`.
 
-[profiles.debugger]
-model = "o3"
-approval_policy = "on-request"
-sandbox_mode    = "workspace-write"
+## Run the server
 
-# 3) In Codex, verify tools and agents
-tools.call name=list_agents
-tools.call name=validate_agents
+- Development (auto TS transpile):
+  ```bash
+  npm run dev
+  ```
+- Production / compiled:
+  ```bash
+  npm start
+  ```
 
-# 4) Delegate one task to an agent
-subagents.delegate(agent="review", task="Summarize and review the last commit")
-```
-
-Tip: See `docs/SECURITY.md` for trust boundaries and `docs/OPERATIONS.md` for E2E and logging.
-
-## Wiring with Codex CLI
-
- Build the server and point Codex at the **absolute** path to the compiled entrypoint. Pass the agents directory explicitly so the server doesn't scan until after the handshake. The server also falls back to an `agents/` folder adjacent to the installed binary (e.g. `dist/../agents`) if `--agents-dir` and `CODEX_SUBAGENTS_DIR` are not provided:
-
-```
-# ~/.codex/config.toml
-[mcp_servers.subagents]
-command = "/absolute/path/to/node"
-args    = ["/absolute/path/to/dist/codex-subagents.mcp.js", "--agents-dir", "/absolute/path/to/agents"]
-
-[profiles.review]
-model = "gpt-5"
-approval_policy = "on-request"
-sandbox_mode    = "read-only"
-
-[profiles.debugger]
-model = "o3"
-approval_policy = "on-request"
-sandbox_mode    = "workspace-write"
-
-[profiles.security]
-model = "gpt-5"
-approval_policy = "never"
-sandbox_mode    = "workspace-write"
+When Codex connects it discovers tools automatically. Verify from the CLI:
+```bash
+/tools.call name=list_agents
+/tools.call name=validate_agents
 ```
 
-Usage (in Codex):
-
-- “Review my last commit. Use the review sub-agent.”
-- “Reproduce and fix the failing tests in api/ using the debugger sub-agent.”
-- “Audit for secrets and unsafe shell calls; propose fixes with rationale using the security sub-agent.”
-
-## AGENTS hint to drop into your repo’s `AGENTS.md`
-
-```
-Route all work through the orchestrator:
-
-subagents.delegate(agent="orchestrator", task="<goal>")
-
-Example security review routed via orchestrator:
-
-subagents.delegate(agent="orchestrator", task="Audit the repo for secrets and unsafe shell calls")
-
-Prefer tool calls over in-thread analysis to keep the main context clean.
+Delegate work either directly or through the orchestrator:
+```bash
+subagents.delegate(agent="reviewer", task="Kurzer Smoke-Test für dieses Repo")
+subagents.delegate(agent="orchestrator", task="Audit the repo for secrets")
 ```
 
-Note: MCP servers run outside Codex’s sandbox. Keep surfaces narrow and audited. This server exposes a single tool: `delegate`.
+## Testing & Diagnostics
 
-## Who This Is For / Not For
+| Command | Purpose |
+| ------- | ------- |
+| `npm test` | Runs Vitest suites (`pool: threads`). Tests set `SUBAGENTS_DISABLE_CODEX=1` so they do not require Codex CLI. |
+| `npm run lint` | ESLint + `@typescript-eslint`. (Current config emits a warning on TS 5.9.x; functionality is unaffected.) |
+| `npm run e2e` | Launches the built server, copies `~/.codex/auth.json`, and executes a smoke delegation against `gpt-5-codex`. Requires network access to `https://chatgpt.com/backend-api/codex/responses`. |
 
-- For: teams already on Codex CLI who want auditable specialist agents and CI gating.
-- Not for: folks seeking a general agent framework or multi‑tool orchestrator.
-
-## Terminology: Agents vs Profiles
-
-- `agent` (what you pass to `subagents.delegate`): the name of an agent loaded from your registry directory. The name is the file basename, e.g., `agents/review.md` → agent `review`.
-- `profile` (Codex CLI): an execution profile you define in `~/.codex/config.toml` under `[profiles.<name>]`. Agents typically specify which profile to use via frontmatter (`profile: <name>`), but agent names and profile names don’t have to match.
-
-There are no hardcoded built‑in agent names. The server loads agents from disk (`agents/*.md|*.json`) or accepts an ad‑hoc agent when both `persona` and `profile` are provided inline.
-
-## Tool: `delegate`
-
-- Parameters:
-  - `agent`: string — the agent name from your registry (basename of `agents/<name>.md|json`)
-  - `task`: string (required)
-  - `cwd?`: string (defaults to current working directory)
-  - `mirror_repo?`: boolean (default false). If true and `cwd` provided, mirrors the repo into the temp workdir for maximal isolation.
-  - `profile?` and `persona?`: optional ad-hoc definition when `agent` is not found in registry. Provide both.
-- Behavior:
-  1. Creates a temp workdir; writes `AGENTS.md` with the agent persona.
-  2. Optionally mirrors the repo into the temp dir via `cp -R` fast path.
-     - Safer alternative (recommended for large repos): `git worktree add <tempdir> <branch-or-HEAD>` (documented in `docs/INTEGRATION.md`).
-  3. Spawns `codex exec --profile <agent-profile> "<task>"` with `cwd` set to the temp dir if mirrored, else your provided `cwd`.
-  4. Returns JSON: `{ ok, code, stdout, stderr, working_dir }`.
+Troubleshooting tips:
+- If `npm run e2e` fails with `401 Unauthorized`, re-run `codex auth login` and ensure your account has access to the selected model.
+- `error sending request ... clouds` usually means network policy blocking `chatgpt.com`; allow outbound HTTPS to that host.
+- Set `DEBUG_MCP=1` before `npm start` for verbose framing logs.
 
 ## Custom agents
 
-Add agents without code changes:
-
-1) File-based registry (recommended)
-
-- Create an agents directory and point the server to it via either:
-  - Config args: add `"--agents-dir", "/path/to/agents"` in `~/.codex/config.toml` under the MCP server args
-  - Env var: `CODEX_SUBAGENTS_DIR=/path/to/agents`
-  - Defaults (auto-detected): `./agents` or `./.codex-subagents/agents`
-
-- Define agents as files using the basename as the agent name:
-
-Example `agents/perf.md`:
-
-```
+Agents are plain Markdown or JSON files whose basename becomes the agent key:
+```md
 ---
-profile: debugger
-approval_policy: on-request   # one of: never | on-request | on-failure | untrusted
-sandbox_mode: workspace-write # one of: read-only | workspace-write | danger-full-access
+profile: review
+approval_policy: on-request
+sandbox_mode: workspace-write
 ---
-You are a pragmatic performance analyst. Identify hotspots, measure, propose minimal fixes with benchmarks.
+You are a pragmatic reviewer...
 ```
 
-Or JSON `agents/migrations.json`:
+The loader walks these locations in order:
+1. `--agents-dir` CLI argument
+2. `CODEX_SUBAGENTS_DIR` environment variable
+3. `./agents` or `./.codex-subagents/agents`
+4. `dist/../agents`
 
-```
-{
-  "profile": "debugger",
-  "approval_policy": "on-request",
-  "sandbox_mode": "workspace-write",
-  "persona": "You plan and validate safe DB migrations with rollbacks.",
-  "personaFile": null
-}
-```
+List the current registry any time with `tools.call name=list_agents`. Validate formatting with `tools.call name=validate_agents`.
 
-2) Ad-hoc agent via tool params
+### Ad-hoc agents
 
-Call `delegate` with a new name and supply both `profile` and `persona`:
-
-```
+You can execute a persona without creating a file by providing both `profile` and `persona` in the tool call:
+```bash
 subagents.delegate(
   agent="perf",
-  task="Analyze render jank",
+  task="Trace render jank in dashboard",
   profile="debugger",
-  approval_policy="on-request",
   sandbox_mode="workspace-write",
-  persona="You are a perf specialist..."
+  persona="You are a pragmatic performance analyst..."
 )
 ```
 
-List available agents:
+## Known limitations
 
-```
-tools.call name=list_agents
-```
+- `@typescript-eslint` warns for TypeScript 5.9.x (the current toolchain still works). Downgrade TS to 5.5.x or upgrade ESLint plugins once new releases land if you want a warning-free lint run.
+- MCP servers run outside Codex’s sandbox; keep agent personas narrow and review third-party contributions.
 
-Validation: `approval_policy` and `sandbox_mode` are validated against the allowed values above. They are advisory metadata and should match the Codex profile you run under. Enforce actual behavior via profiles in `~/.codex/config.toml`.
+## More documentation
 
-Validate agent files:
+- [`docs/INTEGRATION.md`](docs/INTEGRATION.md) – Git worktree mirroring, deployment tips
+- [`docs/OPERATIONS.md`](docs/OPERATIONS.md) – logging, troubleshooting, orchestration artifacts
+- [`docs/SECURITY.md`](docs/SECURITY.md) – threat model & hardening
+- [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md) – envelope format and token gating
 
-```
-tools.call name=validate_agents
-# or
-tools.call name=validate_agents arguments={"dir":"/abs/path/to/agents"}
-```
-Returns per-file errors/warnings and a summary. Invalid values are flagged; missing `profile` in Markdown is a warning (loader defaults to `default`).
-
-## Build, Lint, Test
-
-```
-npm install
-npm run build
-npm run lint
-npm test
-```
-
-Note: Do not edit `dist/` manually; it is build output.
-
-## E2E Demo
-
-Automated end-to-end check using the real Codex CLI:
-
-```
-npm run e2e
-```
-
-It will:
-1. Build the project.
-2. Write a temporary `~/.codex/config.toml` pointing to the built server.
-3. Run `/mcp` to verify the server is connected.
-4. Pick the first agent on disk and call `subagents.delegate`.
-
-The script requires `OPENAI_API_KEY` and a working Codex CLI binary.
-
-## Safety & Operations
-
-| Concern | This repo does |
-| --- | --- |
-| Prevent handshake break | No stdout logs; debug only to stderr (`DEBUG_MCP=1`) |
-| Reduce blast radius | Temp workdir + optional `git worktree` isolation |
-| Gate risky personas | `validate_agents` + profiles/approvals alignment |
-| Network surface | Single tool (`delegate`); Codex handles model I/O |
-| Auditability | Agents live as files; reviewable in PRs |
-
-## Troubleshooting MCP timeouts
-
-> Warning: Stdout must be newline‑delimited JSON only. Any logs on stdout will break the MCP handshake. Use `DEBUG_MCP=1` to emit diagnostics to stderr.
-
-- “codex not found”: Install Codex CLI and ensure it is on PATH. Re-run `npm run e2e`.
-- Timeout on startup: confirm the config points at the absolute `dist/codex-subagents.mcp.js` path and passes `--agents-dir`.
-- Logs on stdout break the handshake. Set `DEBUG_MCP=1` to log timing to stderr only.
-- The server speaks newline-delimited JSON; older configs expecting HTTP headers will stall.
-- Large repos: prefer `git worktree` over `mirror_repo=true` (see `docs/INTEGRATION.md`).
-- Slow start: agent files are loaded lazily after initialization.
-
-## Agent Recipes (starter personas)
-
-These come as file‑based agents under `agents/`. Each link includes a one‑line goal and suggested metadata (frontmatter).
-
-- `agents/review.md`: Code review and refactor checklist. Frontmatter: `profile: review` (suggested: `approval_policy: on-request`, `sandbox_mode: read-only`).
-- `agents/debugger.md`: Reproduce failures and propose minimal fixes. Frontmatter: `profile: debugger` (suggested: `approval_policy: on-request`, `sandbox_mode: workspace-write`).
-- `agents/security.md`: Threat modeling and concrete mitigations. Frontmatter: `profile: security` (suggested: `approval_policy: never`, `sandbox_mode: workspace-write`).
-- `agents/perf.md`: Identify hotspots; measure and optimize. Frontmatter: `profile: default` (suggested: `approval_policy: on-request`, `sandbox_mode: workspace-write`).
-- `agents/docs.md`: Improve and restructure docs. Frontmatter: `profile: default` (suggested: `approval_policy: on-request`, `sandbox_mode: read-only`).
-- `agents/a11y.md`: Accessibility reviews and fixes. Frontmatter: `profile: default` (suggested: `approval_policy: on-request`, `sandbox_mode: read-only`).
-
-Invite PRs that add new agents—see “Contribute an agent”.
-
-## Contribute an agent (fast path)
-
-1. Fork and create `agents/<name>.md` with frontmatter:
-
-   ```yaml
-   profile: debugger
-   approval_policy: on-request
-   sandbox_mode: workspace-write
-   ```
-
-   Then describe the persona in free text.
-2. Run `tools.call name=validate_agents`.
-3. Open a PR using the “Agent request / contribution” template.
-
-We track requested personas in GitHub Discussions (open a new topic under Show & Tell if none exists yet).
-
-## Comparisons
-
-- vs. building your own MCP server: this repo keeps a single tool and file‑based agents to minimize attack surface.
-- vs. complex orchestrators: this intentionally avoids graphs/routers—Codex CLI profiles + file personas keep it simple.
-
-If this project helps, a star helps others discover it.
-
-## Docs
-
-- `docs/INTEGRATION.md`: deeper wiring, profiles, AGENTS.md guidance.
-- `docs/SECURITY.md`: isolation, trust boundaries, sandbox guidance.
-- `docs/OPERATIONS.md`: logs, env vars, upgrades.
-
-## License
-
-MIT
+Happy delegating! 🚀
