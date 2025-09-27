@@ -1,6 +1,6 @@
 # codex-subagents-mcp
 
-[![CI](https://github.com/leonardsellem/codex-subagents-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/leonardsellem/codex-subagents-mcp/actions/workflows/ci.yml)
+[![CI](https://github.com/Kirchlive/codex-subagents-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Kirchlive/codex-subagents-mcp/actions/workflows/ci.yml)
 ![Node >=18](https://img.shields.io/badge/node-%3E%3D18-brightgreen)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 
