@@ -4,6 +4,8 @@
 ![Node >=18](https://img.shields.io/badge/node-%3E%3D18-brightgreen)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 
+> 📋 **[View Fork Changes](./FORK_CHANGES.md)** - Complete documentation of all changes made in this fork
+
 File-based Codex sub-agents served over MCP. Every agent is a plain file you can review, diff, and ship like application code.
 
 - **Auditable by design** – personas live in `agents/*.md|json` and load without rebuilding.
